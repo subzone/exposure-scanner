@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Exposure Scanner — Digital Footprint Audit</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; }
+.container { max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; }
+h1 { color: #58a6ff; font-size: 2rem; margin-bottom: 0.3rem; }
+.subtitle { color: #8b949e; margin-bottom: 2rem; font-size: 1.1rem; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+input { background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 0.8rem 1rem; border-radius: 8px; width: 100%; font-size: 1rem; margin-bottom: 0.8rem; transition: border-color 0.2s; }
+input:focus { outline: none; border-color: #58a6ff; }
+input::placeholder { color: #484f58; }
+button { background: #238636; color: #fff; border: none; padding: 0.9rem 2rem; border-radius: 8px; cursor: pointer; font-size: 1rem; width: 100%; font-weight: 600; transition: background 0.2s; }
+button:hover { background: #2ea043; }
+button:disabled { background: #21262d; color: #484f58; cursor: wait; }
+.finding { padding: 1rem; margin: 0.5rem 0; border-left: 4px solid; border-radius: 6px; background: #0d1117; }
+.finding.critical { border-color: #f85149; }
+.finding.high { border-color: #db6d28; }
+.finding.medium { border-color: #d29922; }
+.finding.low { border-color: #58a6ff; }
+.finding.info { border-color: #484f58; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; margin-right: 0.5rem; }
+.badge.critical { background: #f85149; }
+.badge.high { background: #db6d28; }
+.badge.medium { background: #d29922; color: #000; }
+.badge.info { background: #484f58; }
+.action { color: #7ee787; font-size: 0.85rem; margin-top: 0.4rem; }
+.source { color: #8b949e; font-size: 0.8rem; }
+.summary { display: flex; gap: 0.8rem; margin: 1rem 0; flex-wrap: wrap; }
+.stat { padding: 0.4rem 0.8rem; border-radius: 6px; background: #21262d; font-size: 0.9rem; }
+a { color: #58a6ff; text-decoration: none; }
+a:hover { text-decoration: underline; }
+#spinner { display: none; text-align: center; padding: 2rem; color: #8b949e; }
+.ai-report { background: #0d1117; border: 1px solid #238636; border-radius: 8px; padding: 1.2rem; margin-top: 1rem; white-space: pre-wrap; line-height: 1.6; font-size: 0.9rem; }
+.ai-label { color: #7ee787; font-size: 0.8rem; margin-bottom: 0.5rem; }
+.footer { text-align: center; color: #484f58; margin-top: 3rem; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🔍 Exposure Scanner</h1>
+<p class="subtitle">Audit your digital footprint. See what's publicly exposed.</p>
+
+<div class="card">
+<form id="scan-form" onsubmit="startScan(event)">
+  <input type="email" name="email" placeholder="Your email address" required>
+  <input type="text" name="username" placeholder="Username to check across platforms">
+  <button type="submit" id="btn">Scan My Exposure</button>
+</form>
+</div>
+
+<div id="spinner">⏳ Scanning 20+ platforms... this takes 10-30 seconds</div>
+<div id="results"></div>
+
+<div class="footer">
+  100% client-triggered. No data stored. Checks public sources only.<br>
+  <a href="https://github.com/subzone/exposure-scanner">Open Source</a>
+</div>
+</div>
+
+<script>
+async function startScan(e) {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  document.getElementById('spinner').style.display = 'block';
+  document.getElementById('results').innerHTML = '';
+
+  // Run scan
+  const r = await fetch('/api/scan', { method: 'POST', body: new URLSearchParams(form) });
+  const data = await r.json();
+
+  document.getElementById('spinner').style.display = 'none';
+
+  let html = '';
+
+  // Summary badges
+  html += '<div class="summary">';
+  for (const [sev, count] of Object.entries(data.summary || {})) {
+    html += '<span class="stat"><span class="badge ' + sev + '">' + sev + '</span> ' + count + '</span>';
+  }
+  html += '</div>';
+
+  // Findings
+  if (data.findings.length === 0) {
+    html += '<div class="card">✅ No significant exposure found. Good digital hygiene!</div>';
+  } else {
+    for (const f of data.findings) {
+      html += '<div class="finding ' + f.severity + '">';
+      html += '<span class="badge ' + f.severity + '">' + f.severity + '</span>';
+      html += '<strong>' + f.title + '</strong> <span class="source">(' + f.source + ')</span>';
+      html += '<p style="margin-top:0.3rem;color:#8b949e">' + f.detail + '</p>';
+      if (f.url) html += '<a href="' + f.url + '" target="_blank" style="font-size:0.85rem">View →</a> ';
+      if (f.action) html += '<p class="action">💡 ' + f.action + '</p>';
+      html += '</div>';
+    }
+  }
+
+  document.getElementById('results').innerHTML = html;
+
+  // Get AI analysis
+  if (data.findings.length > 0) {
+    const aiDiv = document.createElement('div');
+    aiDiv.className = 'card';
+    aiDiv.innerHTML = '<div class="ai-label">🤖 AI Security Analysis</div><div class="ai-report">Generating personalized report...</div>';
+    document.getElementById('results').appendChild(aiDiv);
+
+    try {
+      const ar = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({findings: data.findings})
+      });
+      const aiData = await ar.json();
+      aiDiv.querySelector('.ai-report').textContent = aiData.report;
+    } catch (err) {
+      aiDiv.querySelector('.ai-report').textContent = 'AI analysis unavailable.';
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Scan Again';
+}
+</script>
+</body>
+</html>
