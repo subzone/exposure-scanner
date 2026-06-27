@@ -100,11 +100,11 @@ async def check_github_email(email):
             if r.status_code == 200:
                 count = r.json().get("total_count", 0)
                 if count > 0:
-                    findings.append({"source": "GitHub", "severity": "medium",
+                    findings.append({"source": "GitHub", "severity": "low",
                         "title": f"Email in {count} public commit(s)",
-                        "detail": f"Email '{email}' visible in public git history.",
+                        "detail": f"Email '{email}' is associated with public commits. Normal for developers with public repos.",
                         "url": f"https://github.com/search?q=author-email%3A{email}&type=commits",
-                        "action": "Use noreply email: git config user.email 'user@users.noreply.github.com'"})
+                        "action": "Optional: use noreply email for future commits if you prefer privacy."})
         except Exception:
             pass
     return findings
