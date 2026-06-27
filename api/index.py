@@ -110,6 +110,95 @@ async def check_github_email(email):
     return findings
 
 
+async def check_gravatar(email):
+    """Check if Gravatar profile exists (reveals linked accounts + photo)."""
+    findings = []
+    email_hash = hashlib.md5(email.lower().strip().encode()).hexdigest()
+    async with httpx.AsyncClient(timeout=8) as c:
+        try:
+            r = await c.get(f"https://en.gravatar.com/{email_hash}.json")
+            if r.status_code == 200:
+                data = r.json()
+                profile = data.get("entry", [{}])[0]
+                name = profile.get("displayName", "")
+                accounts = profile.get("accounts", [])
+                photos = profile.get("photos", [])
+                detail = f"Profile found with display name '{name}'." if name else "Profile found."
+                if accounts:
+                    detail += f" Linked accounts: {', '.join(a.get('shortname', '') for a in accounts[:5])}"
+                findings.append({"source": "Gravatar", "severity": "medium",
+                    "title": "Gravatar profile exposes identity",
+                    "detail": detail,
+                    "url": f"https://gravatar.com/{email_hash}",
+                    "action": "Review gravatar.com profile. Remove linked accounts or use a different email for public services."})
+        except Exception:
+            pass
+    return findings
+
+
+async def check_wayback(email, username):
+    """Check Wayback Machine for cached pages mentioning the person."""
+    findings = []
+    query = username or email.split("@")[0]
+    async with httpx.AsyncClient(timeout=10) as c:
+        try:
+            r = await c.get(f"https://web.archive.org/cdx/search/cdx?url=*{query}*&output=json&limit=5")
+            if r.status_code == 200 and r.text.strip() and r.text.strip() != "[]":
+                rows = r.json()
+                if len(rows) > 1:  # first row is header
+                    count = len(rows) - 1
+                    findings.append({"source": "Wayback Machine", "severity": "low",
+                        "title": f"{count} archived page(s) found",
+                        "detail": f"The Wayback Machine has cached pages related to '{query}'.",
+                        "url": f"https://web.archive.org/web/*/{'*' + query + '*'}",
+                        "action": "Review cached pages. Request removal at web.archive.org if sensitive content found."})
+        except Exception:
+            pass
+    return findings
+
+
+async def check_pgp_keys(email):
+    """Check if PGP public keys exist (reveals name, email associations)."""
+    findings = []
+    async with httpx.AsyncClient(timeout=8) as c:
+        try:
+            r = await c.get(f"https://keys.openpgp.org/vks/v1/by-email/{email}")
+            if r.status_code == 200 and len(r.text) > 50:
+                findings.append({"source": "OpenPGP", "severity": "info",
+                    "title": "PGP public key found",
+                    "detail": f"A PGP key associated with '{email}' is published on keys.openpgp.org.",
+                    "url": f"https://keys.openpgp.org/search?q={email}",
+                    "action": "PGP keys often contain full name. Revoke if no longer used."})
+        except Exception:
+            pass
+    return findings
+
+
+async def check_whois(domain):
+    """Check WHOIS/RDAP for domain registration info."""
+    findings = []
+    if not domain:
+        return findings
+    async with httpx.AsyncClient(timeout=10) as c:
+        try:
+            r = await c.get(f"https://rdap.org/domain/{domain}")
+            if r.status_code == 200:
+                data = r.json()
+                for entity in data.get("entities", []):
+                    vcards = entity.get("vcardArray", [None, []])[1] if entity.get("vcardArray") else []
+                    for vcard in vcards:
+                        if isinstance(vcard, list) and vcard[0] == "fn" and vcard[3]:
+                            findings.append({"source": "WHOIS/RDAP", "severity": "medium",
+                                "title": f"Personal info in domain WHOIS: {vcard[3]}",
+                                "detail": f"Domain '{domain}' registration exposes registrant identity.",
+                                "url": f"https://rdap.org/domain/{domain}",
+                                "action": "Enable WHOIS privacy through your domain registrar."})
+                            break
+        except Exception:
+            pass
+    return findings
+
+
 async def ai_analyze(findings):
     if not GROQ_API_KEY or not findings:
         return _fallback(findings)
@@ -147,13 +236,24 @@ async def home():
 
 
 @app.post("/api/scan")
-async def scan(email: str = Form(""), username: str = Form("")):
+async def scan(email: str = Form(""), username: str = Form(""), domain: str = Form("")):
     tasks = []
     if email:
         tasks.append(check_hibp(email))
         tasks.append(check_github_email(email))
+        tasks.append(check_gravatar(email))
+        tasks.append(check_pgp_keys(email))
     if username:
         tasks.append(check_username(username))
+    if email or username:
+        tasks.append(check_wayback(email, username))
+    if domain:
+        tasks.append(check_whois(domain))
+    elif email and "." in email.split("@")[-1]:
+        # Auto-check domain from email
+        email_domain = email.split("@")[-1]
+        if email_domain not in ("gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com"):
+            tasks.append(check_whois(email_domain))
 
     all_findings = await asyncio.gather(*tasks)
     findings = []
